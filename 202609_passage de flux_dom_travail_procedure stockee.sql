@@ -169,8 +169,23 @@ $b$,tous_epci,filtre,tous_epci,filtre);
 
     $$;
 
---test
-call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp('__atlas_2026_projets','flux_tdb_csp_sddv','200071066');
+--exemples de cas d'usages :
 
+--cas simple pour un chargé d'études
+call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp('schema','table','code_epci1,code_epci2, etc.');
+--cas avec une requête en amont pour générer la liste des EPCI
 
-select * from __atlas_2026_projets.flux_tdb_csp_sddv
+    --1 simplement copier coller la liste des EPCI récupérés via la requête
+select string_agg(distinct code_epci,',') from ref_geo.refcom2026 where sudlor='oui';
+call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp('public','____test_tdb','200005957,200033025,200033868,200034874,200035772,200041515,200042000,200066108,200066140,200066157,200067643,200068369,200068377,200068559,200068682,200068757,200068773,200069433,200070324,200070563,200070589,200071066,200096634,200096642,245400171,245400189,245400510,245400601,245400676,245400759,245500327,245501184');
+
+    --2 utilisation d'une variable avec le résultat de la rqt pour l'appeler dans call
+
+DO $$
+    declare liste_epci text;
+
+    begin
+        select string_agg(distinct code_epci,',') from ref_geo.refcom2026 where sudlor='oui' INTO liste_epci;
+        call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp ('public','table',liste_epci);
+    end;
+    $$;
