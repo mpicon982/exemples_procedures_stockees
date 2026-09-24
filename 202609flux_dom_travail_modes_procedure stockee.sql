@@ -30,7 +30,7 @@ BEGIN
             (select count(*) nb from unnest(v_filtre) as f(codes) where length(codes) = 9)
                 != cardinality(v_filtre)
         then
-            raise exception 'Veuillez entrer des codes EPCI de 9 caractères' using errcode = 'invalid_parameter_value';
+            raise exception 'Veuillez entrer des codes EPCI de 9 caractères. Liste des EPCI : %',p_liste_epci using errcode = 'invalid_parameter_value';
 
         end if;
 
