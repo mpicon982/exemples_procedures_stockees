@@ -1,0 +1,190 @@
+
+create or replace procedure observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp (p_schema_name text default 'public', p_table_name text default 'flux_dt_csp_tdb', p_liste_epci text default NULL)
+    LANGUAGE plpgsql AS
+
+    $$
+
+        DECLARE v_rqt_temp_internes text; --rqt pour table temp contenant les flux internes
+        v_rqt_temp_entrants text:=''; --pour flux entrants
+        v_rqt_temp_sortants text:=''; -- pour flux sortants
+        v_unionall text ; --variable pour gagner du temps dans les boucles avec union all
+        v_filtre text[]; --version array de liste_epci
+        v_epci text ; --variable n pour les boucles
+
+        --liste_epci est utilisé comme filtre, c'est un texte délimité par des ',' que je vasi transformer en array pour filtrer ensuuite
+
+        BEGIN
+            if p_liste_epci is distinct from '*' then
+                if p_liste_epci is NULL then
+                    raise exception 'Veuillez entrer un ou plusieurs codes EPCI séparés par des virgules' using errcode = 'invalid_parameter_value';
+
+                end if;
+
+
+                --suppresion espaces en trop
+                p_liste_epci := replace(p_liste_epci, ' ', '');
+                v_filtre := regexp_split_to_array(p_liste_epci, ',');
+
+                --vérif longueur des codes epci
+                if
+                    (select count(*) nb from unnest(v_filtre) as f(codes) where length(codes) = 9)
+                        != cardinality(v_filtre)
+                then
+                    raise exception 'Veuillez entrer des codes EPCI de 9 caractères. Liste des EPCI : %',p_liste_epci using errcode = 'invalid_parameter_value';
+
+                end if;
+
+            end if; -- fin du if liste_epci!='*' then
+            if p_liste_epci='*' then
+                select array_agg(code_epci) from ref_geo.refepci2026 into v_filtre; --récupération de tous les codes EPCI dans le filtre
+            end if;
+        --maintenant on attaque la création de la table en décomposant en trois tables temp
+
+        --flux internes
+            v_rqt_temp_internes:=format($b$ create temporary table temp_internes as(
+
+select 'internes'           type_de_flux,
+       o.code_epci          code_epci,
+       o.nom_epci           nom_epci,
+
+       case
+           when gs = '1'
+               then 'Agriculteurs exploitants / Agricultrices exploitantes'
+           when gs = '2' then $d$Artisans / Artisanes, commerçants / commerçantes et chefs / cheffes d'entreprise$d$
+           when gs = '3' then 'Cadres et professions intellectuelles supérieures'
+           when gs = '4' then 'Professions intermédiaires'
+           when gs = '5' then 'Employés / Employées'
+           when gs = '6' then 'Ouvriers / Ouvrières'
+           when gs = 'Z' then 'Sans objet'
+           end              groupe_socioprofessionnel_en_6_postes,
+       round(sum(ipondi::numeric)) flux,
+       100.0*sum(coalesce(ipondi::numeric,0))/sum(sum(coalesce(ipondi::numeric,0))) over(partition by o.code_epci) part_flux
+
+
+from rp2023.fd_mobpro_2023 m
+         join ref_geo.refcom2026 o on o.code_com = m.commune
+         join ref_geo.refcom2026 d on d.code_com = m.dclt
+where o.code_epci = any(%L)
+ and d.code_epci = any(%L) and
+            o.code_epci = d.code_epci
+group by gs, o.code_epci, d.code_epci, o.nom_epci, d.nom_epci);
+$b$,v_filtre,v_filtre);
+
+            -- flux entrants
+            --l'idée est ici de boucler sur les EPCI du sud 54
+            --pour construire les union all de façon récursive plutôt qu'à la main
+
+            FOR v_epci in (select unnest(v_filtre)) loop -- on parcourt la liste d'EPCI (array dim 1 éclaté en table d'une colonne)
+                    if v_rqt_temp_entrants='' then v_unionall:='';
+                    else v_unionall:=' union all '; end if;
+                    v_rqt_temp_entrants:=v_rqt_temp_entrants||v_unionall||format(
+                            $e$
+    select
+    'entrants' type_de_flux,
+    d.code_epci  code_epci,
+    d.nom_epci   nom_epci,
+    case
+        when gs = '1'
+            then 'Agriculteurs exploitants / Agricultrices exploitantes'
+        when gs = '2' then $c$Artisans / Artisanes, commerçants / commerçantes et chefs / cheffes d'entreprise$c$
+        when gs = '3' then 'Cadres et professions intellectuelles supérieures'
+        when gs = '4' then 'Professions intermédiaires'
+        when gs = '5' then 'Employés / Employées'
+        when gs = '6' then 'Ouvriers / Ouvrières'
+        when gs = 'Z' then 'Sans objet'
+        end              groupe_socioprofessionnel_en_6_postes,
+    round(sum(coalesce(ipondi::numeric,0))) flux,
+    100.0*sum(coalesce(ipondi::numeric,0))/sum(sum(coalesce(ipondi::numeric,0))) over() part_flux
+
+                                             from rp2023.fd_mobpro_2023 m
+         join ref_geo.refcom2026 o on o.code_com=m.commune
+         join ref_geo.refcom2026 d on d.code_com=m.dclt
+         where d.code_epci=%L and o.code_epci!=%L
+         group by m.gs, d.code_epci,d.nom_epci
+                                              $e$, v_epci, v_epci
+                                                                );
+
+            --requête flux sortants
+
+            v_rqt_temp_sortants:=v_rqt_temp_sortants||v_unionall||format(
+                    $d$
+    select
+    'sortants' type_de_flux,
+    o.code_epci  code_epci,
+    o.nom_epci   nom_epci,
+    case
+        when gs = '1'
+            then 'Agriculteurs exploitants / Agricultrices exploitantes'
+        when gs = '2' then 'Artisans / Artisanes, commerçants / commerçantes et chefs / cheffes d''entreprise'
+        when gs = '3' then 'Cadres et professions intellectuelles supérieures'
+        when gs = '4' then 'Professions intermédiaires'
+        when gs = '5' then 'Employés / Employées'
+        when gs = '6' then 'Ouvriers / Ouvrières'
+        when gs = 'Z' then 'Sans objet'
+        end              groupe_socioprofessionnel_en_6_postes,
+    round(sum(coalesce(ipondi::numeric,0))) flux,
+    100.0*sum(coalesce(ipondi::numeric,0))/sum(sum(coalesce(ipondi::numeric,0))) over() part_flux
+
+                                             from rp2023.fd_mobpro_2023 m
+         join ref_geo.refcom2026 o on o.code_com=m.commune
+
+         where o.code_epci=%L and m.dclt not in(select code_com from ref_geo.refcom2026 r where r.code_epci=%L)
+         group by m.gs, o.code_epci,o.nom_epci
+                                              $d$, v_epci,   v_epci
+                                                                );
+            end loop;
+
+--finalisation de la procédure --> construction finale des rqt entr sort, hors boucle, exécution des rqt et nettoyage des rqt temp.
+            --raise notice de contrôle de la requête internes
+            --raise notice '%',rqt_temp_internes;
+            --raise notice de contrôle de la requête entrants
+            -- raise notice '%', rqt_temp_entrants;
+            --cntrôle de la requête des flux sortants
+            --raise notice '%', rqt_temp_sortants;
+
+            --ajout des create dans les requêtes
+
+            v_rqt_temp_entrants:='create temporary table temp_entrants as('||v_rqt_temp_entrants||');';
+            v_rqt_temp_sortants:='create temporary table temp_sortants as('||v_rqt_temp_sortants||');';
+            --suppresion préventive des temp tables
+            execute 'drop table if exists temp_internes ;';
+            execute 'drop table if exists temp_entrants;';
+            execute 'drop table if exists temp_sortants';
+            --créations des tables temp
+            execute v_rqt_temp_internes;
+            execute v_rqt_temp_entrants;
+            execute v_rqt_temp_sortants;
+            --création de la table globale définitive
+            execute format('create schema if not exists %I;',p_schema_name);
+            execute format('drop table if exists %I.%I',p_schema_name,p_table_name);
+            execute format('create table %I.%I as(select * from temp_internes union all select * from temp_entrants union all select * from temp_sortants);',
+                            p_schema_name,p_table_name);
+            raise notice '☭ table %.% créée camarade ☭',p_schema_name, p_table_name;
+            --suppression propre tables temp
+            execute 'drop table if exists temp_internes';
+            execute 'drop table if exists temp_entrants';
+            execute 'drop table if exists temp_sortants';
+        end;
+
+    $$;
+
+--exemples de cas d'usages :
+
+--cas simple pour un chargé d'études
+call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp('schema','table','code_epci1,code_epci2, etc.');
+--cas avec une requête en amont pour générer la liste des EPCI
+
+    --1 simplement copier coller la liste des EPCI récupérés via la requête
+select string_agg(distinct code_epci,',') from ref_geo.refcom2026 where sudlor='oui';
+call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp('public','____test_tdb','200005957,200033025,200033868,200034874,200035772,200041515,200042000,200066108,200066140,200066157,200067643,200068369,200068377,200068559,200068682,200068757,200068773,200069433,200070324,200070563,200070589,200071066,200096634,200096642,245400171,245400189,245400510,245400601,245400676,245400759,245500327,245501184');
+
+    --2 utilisation d'une variable avec le résultat de la rqt pour l'appeler dans call
+
+DO $$
+    declare liste_epci text;
+
+    begin
+        select string_agg(distinct code_epci,',') from ref_geo.refcom2026 where sudlor='oui' INTO liste_epci;
+        call observatoire_mobilites.proc_fd_mobpro_tdb_flux_csp ('public','table',liste_epci);
+    end;
+    $$;
