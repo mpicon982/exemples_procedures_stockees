@@ -1,3 +1,14 @@
+--configuration de toute ma base pour avoir accès à toutes les erreurs cachées pour les développpements futrs
+
+-- Au niveau de la base entière (recommandé pour un usage systématique)
+/*
+ALTER DATABASE aduan SET plpgsql.extra_warnings = 'shadowed_variables';
+
+-- Ou combiné avec d'autres vérifications utiles du même paramètre
+ALTER DATABASE aduan SET plpgsql.extra_warnings = 'shadowed_variables, strict_multi_assignment';*/
+-- Depuis n'importe quelle base, liste toutes les bases avec leur propriétaire
+
+
 
 create or replace procedure observatoire_mobilites.proc_fd_mobpro_tdb_flux_modes (p_schema_name text default 'public', p_table_name text default 'flux_dt_csp_tdb', p_liste_epci text default NULL)
     LANGUAGE plpgsql AS
