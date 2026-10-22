@@ -69,3 +69,7 @@ $$;
 
 comment on procedure proc_creation_grille(p_borne_ouest numeric, p_borne_est numeric, p_borne_nord numeric, p_borne_sud numeric, p_pas bigint, p_srid int, p_schema text, p_table text)
     is E'Procédure de création de grille personnalisée, à privilégier avec des systèmes de coordonnées PLANES. Ne pas en abuser pour ne pas créer des tables très lourdes.\nLa procédure ne crée pas d''index et de pk, à vous de le faire si besoin\n Paramètres :\n borne ouest , borne est, borne nord, borne sud --> nombres réels ; pas (écart entre les lignes de grilles) nb entier ; srid (nb entier) ; nom du schéma ; nom de la table';
+
+--exemple de grille à l'échelle RGE
+
+--call proc_creation_grille(728354.1,1082838.1,7009413.3,6710829.2,10000,2154,'exploitations_rp','grille_decakilometrique');
